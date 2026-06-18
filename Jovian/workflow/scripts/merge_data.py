@@ -41,6 +41,13 @@ Example:
 import pandas as pd
 from sys import argv
 from Bio import SeqIO
+from taxonomy_compat import (
+    DOMAIN_OR_REALM_COLUMN,
+    LEGACY_TOP_LEVEL_COLUMN,
+    add_legacy_superkingdom,
+    is_virus_record,
+    strip_object_columns,
+)
 
 (
     SCRIPT,
@@ -82,7 +89,7 @@ colnames_rankedlineage = [
     "class",
     "phylum",
     "kingdom",
-    "superkingdom",
+    DOMAIN_OR_REALM_COLUMN,
 ]
 taxdump_rankedlineage = pd.read_csv(
     PATH_TAXDUMP_RANKEDLINEAGE,
@@ -91,11 +98,14 @@ taxdump_rankedlineage = pd.read_csv(
     names=colnames_rankedlineage,
     low_memory=False,
 )
+taxdump_rankedlineage = strip_object_columns(taxdump_rankedlineage)
+taxdump_rankedlineage = add_legacy_superkingdom(taxdump_rankedlineage)
 # Import new_taxdump host
 colnames_host = ["tax_id", "potential_hosts"]
 taxdump_host = pd.read_csv(
     PATH_TAXDUMP_HOST, sep="|", header=None, names=colnames_host, low_memory=False
 )
+taxdump_host = strip_object_columns(taxdump_host)
 # Import per scaffold ORF counts
 colnames_scaffold_orf_count_list = ["Nr_ORFs", "scaffold_name"]
 contig_orf_count_list = pd.read_csv(
@@ -139,7 +149,7 @@ colnames = [
     "class",
     "phylum",
     "kingdom",
-    "superkingdom",
+    LEGACY_TOP_LEVEL_COLUMN,
     "Avg_fold",
     "Length",
     "Ref_GC",
@@ -171,7 +181,7 @@ taxUnclassified = df4.loc[(df4["taxID"] == 1 ) | (df4["taxID"].isnull())].drop(
         "class",
         "phylum",
         "kingdom",
-        "superkingdom",
+        LEGACY_TOP_LEVEL_COLUMN,
     ],
     axis=1,
 )
@@ -181,7 +191,7 @@ taxUnclassified.to_csv(
 # Slice into virus scaffolds with added host/disease information, print to file
 virus_taxa_with_NCBIhosts = (
     pd.merge(
-        taxClassified.loc[taxClassified["superkingdom"] == "Viruses"].iloc[
+        taxClassified.loc[taxClassified.apply(is_virus_record, axis=1)].iloc[
             :, [0, 1, 2]
         ],
         taxdump_host,

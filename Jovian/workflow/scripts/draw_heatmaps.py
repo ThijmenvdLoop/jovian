@@ -26,10 +26,23 @@ import pandas as pd
 from bokeh.plotting import figure, output_file, save
 from bokeh.models import HoverTool, ColumnDataSource
 from bokeh.models.widgets import Tabs, Panel
+from taxonomy_compat import (
+    LEGACY_TOP_LEVEL_COLUMN,
+    add_legacy_superkingdom,
+    strip_object_columns,
+)
 
 
 # Set global VARIABLES-------------------------------------
-RANKS = ["superkingdom", "phylum", "class", "order", "family", "genus", "species"]
+RANKS = [
+    LEGACY_TOP_LEVEL_COLUMN,
+    "phylum",
+    "class",
+    "order",
+    "family",
+    "genus",
+    "species",
+]
 
 PHAGE_FAMILY_LIST = [
     "Myoviridae",
@@ -59,11 +72,11 @@ def parse_arguments():
     Parse the arguments from the command line, i.e.:
      -c/--classified = table with taxonomic classifications
      -n/--numbers = file with (MultiQC, Trimmomatic's) read numbers
-     -s/--super = output file for superkingdoms heatmap
+     -s/--super = output file for top-level taxonomy heatmap
      -v/--virus = output file for virus heatmap
      -p/--phage = output file for phage heatmap
      -b/--bact = output file for bacteria heatmap
-     -sq/--super-quantities = output file for superkingdom quantities
+     -sq/--super-quantities = output file for top-level taxonomy quantities
      -st/--stats = output file with taxonomic rank statistics
      -vs/--vir-stats = ouput file for viral statistis
      -ps/--phage-stats = output file for phage statistics
@@ -108,7 +121,7 @@ def parse_arguments():
         metavar="",
         required=True,
         type=str,
-        help="Table with superkingdom quantities per sample",
+        help="Table with top-level taxonomy quantities per sample",
     )
 
     required.add_argument(
@@ -158,7 +171,7 @@ def parse_arguments():
         metavar="",
         required=True,
         type=str,
-        help="File name for superkingdoms heatmap",
+        help="File name for top-level taxonomy heatmap",
     )
 
     required.add_argument(
@@ -243,6 +256,8 @@ def read_classifications(infile):
     # and numbers of reads mapped to the scaffolds (i.e.
     # the result/output of the pipeline).
     classifications_df = pd.read_csv(infile, delimiter="\t")
+    classifications_df = strip_object_columns(classifications_df)
+    classifications_df = add_legacy_superkingdom(classifications_df)
 
     # Check column names for debugging:
     # print(classifications_df.columns)
@@ -254,7 +269,7 @@ def read_classifications(infile):
             "scaffold_name",
             "taxID",
             "tax_name",
-            "superkingdom",
+            LEGACY_TOP_LEVEL_COLUMN,
             "kingdom",
             "phylum",
             "class",
@@ -339,7 +354,7 @@ def report_taxonomic_statistics(df, outfile):
         f.write(header)
         # Count how many taxa have been reported
         for t in [
-            "superkingdom",
+            LEGACY_TOP_LEVEL_COLUMN,
             "phylum",
             "class",
             "order",
@@ -359,12 +374,12 @@ def draw_heatmaps(df, outfile, title, taxonomic_rank, colour):
     Draw heatmaps for the given input dataframe, to
     the specified file with the given title.
     """
-    # If the sample contains only superkingdom information, use that:
-    if taxonomic_rank == "superkingdom":
+    # If the sample contains only top-level taxonomy information, use that:
+    if taxonomic_rank == LEGACY_TOP_LEVEL_COLUMN:
         # create source info
         # and set hovertool tooltip parameters
         samples = df["Sample_name"].astype(str)
-        assigned = df["superkingdom"].astype(str)
+        assigned = df[LEGACY_TOP_LEVEL_COLUMN].astype(str)
         reads = df["reads"].astype(float)
         percent_of_total = df["Percentage"].astype(float)
 
@@ -585,8 +600,8 @@ def draw_heatmaps(df, outfile, title, taxonomic_rank, colour):
     else:
         pass
     # Adjust heatmap sizes depending on the number of
-    # taxa observed (not applicable for superkingdom heatmap)
-    if taxonomic_rank != "superkingdom":
+    # taxa observed (not applicable for the top-level taxonomy heatmap)
+    if taxonomic_rank != LEGACY_TOP_LEVEL_COLUMN:
         if len(set(taxonomy)) > 100:
             p.plot_height = int(p.plot_height * 3)
             p.plot_width = int(p.plot_width * 1.5)
@@ -598,7 +613,7 @@ def draw_heatmaps(df, outfile, title, taxonomic_rank, colour):
         else:
             pass
 
-        # And set tooltip depending on superkingdoms
+        # And set tooltip depending on top-level taxonomy groups
 
         if aggregated:
             # An aggregated format requires a different hover tooltip
@@ -670,8 +685,8 @@ def draw_heatmaps(df, outfile, title, taxonomic_rank, colour):
     panel = Panel(child=p, title=title.split()[1].title())
     # the .title() methods capitalises a string
 
-    if taxonomic_rank == "superkingdom":
-        # The superkingdom heatmap still requires a single output file
+    if taxonomic_rank == LEGACY_TOP_LEVEL_COLUMN:
+        # The top-level taxonomy heatmap still requires a single output file
         output_file(outfile, title=title)
         save(p)
         print("The heatmap %s has been created and written to: %s" % (title, outfile))
@@ -732,22 +747,24 @@ def main():
     merged_df["Percentage"] = merged_df.reads / merged_df.read_pairs * 100
 
     # 3. Create chunks of information required for the heatmaps
-    # 3.1. Aggregate superkingdom-rank information
+    # 3.1. Aggregate top-level taxonomy information
     # Count the percentages of Archaea, Bacteria, Eukaryota and Viruses per sample:
     superkingdom_sums = pd.DataFrame(
-        merged_df.groupby(["Sample_name", "superkingdom"]).sum()[
+        merged_df.groupby(["Sample_name", LEGACY_TOP_LEVEL_COLUMN]).sum()[
             ["reads", "Percentage"]
         ]
     )
     superkingdom_sums.reset_index(
         inplace=True
-    )  # to use MultiIndex "Sample_name" and "superkingdom" as columns
+    )  # to use MultiIndex "Sample_name" and top-level taxonomy as columns
 
     superkingdom_sums.to_csv(arguments.super_quantities, index=False)
     print("File %s has been created!" % arguments.super_quantities)
 
     # 3.2. Filter viruses from the table
-    virus_df = filter_taxa(df=merged_df, taxon="Viruses", rank="superkingdom")
+    virus_df = filter_taxa(
+        df=merged_df, taxon="Viruses", rank=LEGACY_TOP_LEVEL_COLUMN
+    )
     # Remove the phages from the virus df to make less cluttered heatmaps
     virus_df = remove_taxa(df=virus_df, taxon=PHAGE_FAMILY_LIST, rank="family")
 
@@ -755,7 +772,9 @@ def main():
     phage_df = filter_taxa(df=merged_df, taxon=PHAGE_FAMILY_LIST, rank="family")
 
     # 3.4. Filter bacteria
-    bacterium_df = filter_taxa(df=merged_df, taxon="Bacteria", rank="superkingdom")
+    bacterium_df = filter_taxa(
+        df=merged_df, taxon="Bacteria", rank=LEGACY_TOP_LEVEL_COLUMN
+    )
 
     # 4. Write taxonomic rank statistics to a file, for each chunk
     # 4.1. All taxa
@@ -768,12 +787,12 @@ def main():
     report_taxonomic_statistics(df=bacterium_df, outfile=arguments.bact_stats)
 
     # 5. Draw heatmaps for each chunk
-    # 5.1. All taxa: superkingdoms
+    # 5.1. All taxa: top-level taxonomy
     draw_heatmaps(
         df=superkingdom_sums,
         outfile=arguments.super,
-        title="Superkingdoms heatmap",
-        taxonomic_rank="superkingdom",
+        title="Top-level taxonomy heatmap",
+        taxonomic_rank=LEGACY_TOP_LEVEL_COLUMN,
         colour=arguments.colour,
     )
 
@@ -863,7 +882,7 @@ def main():
     # 5.4. Bacteria
     bacterium_tabs = []
     for rank in RANKS[1:]:
-        # Create heatmaps for each rank below 'superkingdom'
+        # Create heatmaps for each rank below the top-level taxonomy group
         (content, panel) = draw_heatmaps(
             df=bacterium_df,
             outfile=None,
